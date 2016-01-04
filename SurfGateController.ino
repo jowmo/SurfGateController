@@ -24,9 +24,15 @@ void(* resetFunc) (void) = 0;
 
 void setup()  
 {   
+  // piezo output pin
+  pinMode(4, OUTPUT);
+  
   // Serial Setup
   Serial.begin(115200);
   Serial.println("SurfGateController Booting...");
+
+  // Play startup tone
+  playStartup();
 
   // BT Setup
   setupBluetooth();
@@ -41,6 +47,15 @@ void setup()
   // in the middle and call the "Compare A" function above
   OCR0A = 0xAF;
   TIMSK0 |= _BV(OCIE0A);
+}
+
+void playStartup() {
+  int freq = 500;
+  for (int i=0; i<3; i++) {
+    tone (4, freq, 200);
+    freq += 1000;
+    delay(200);
+  }
 }
 
 void setupBluetooth() {
@@ -105,12 +120,10 @@ void commandProcessor() {
 SIGNAL(TIMER0_COMPA_vect) {
   char c = GPS.read();
 
-/*
   if (btSerial.available()) {
       char t = (char)btSerial.read();
       Serial.write(t);
   }
-*/
 }
 
 int freeRam () 
@@ -164,15 +177,6 @@ void loop()
       Serial.println();
     }
 
-
-/*
-    String t;
-    while (btSerial.available()) {
-      t = (char)btSerial.read();
-      Serial.print(t);      
-      Serial.print("............");
-    }
-*/
     // format: fix, satellies, knots, direction, in_motion, percent_deployed
     btSerial.print((int)GPS.fix);
     btSerial.print(",");
