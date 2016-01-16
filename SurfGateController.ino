@@ -19,13 +19,26 @@ SoftwareSerial btSerial(10, 11);  // BT TX, BT RX
 
 Adafruit_GPS GPS(&gpsSerial);
 
+/*
+ * setup pins for actuator relays
+ */
+int relayPin1 = 6;                 // IN1 connected to digital pin 6
+int relayPin2 = 7;                 // IN2 connected to digital pin 7
+int relayPin3 = 8;                 // IN3 connected to digital pin 8
+int relayPin4 = 9;                 // IN4 connected to digital pin 9
+
+int portPin = 12;                  // The port gate switch
+int starPin = 13;                  // The starboard gate switch
+
+int audioPin = 4;                  // The piezo device
+
 // define reset function for software-enable Arduino resets
 void(* resetFunc) (void) = 0;
 
 void setup()  
 {   
   // piezo output pin
-  pinMode(4, OUTPUT);
+  pinMode(audioPin, OUTPUT);
   
   // Serial Setup
   Serial.begin(115200);
@@ -34,11 +47,18 @@ void setup()
   // Play startup tone
   playStartup();
 
+  // Relay board setup
+  setupRelay();
+
   // BT Setup
   setupBluetooth();
 
   // GPS Setup
   setupGPS();
+
+  // Signal ready status
+  playReady();
+  Serial.println("All Systems Ready.");
 
   //
   // Setup the Interrupt used for GPS reading
@@ -52,12 +72,22 @@ void setup()
 void playStartup() {
   int freq = 500;
   for (int i=0; i<3; i++) {
-    tone (4, freq, 200);
+    tone (audioPin, freq, 200);
     freq += 1000;
     delay(200);
   }
 }
 
+
+void playReady() {
+  tone (audioPin, 2000, 1000);
+  return; 
+  delay(300);
+  for (int i=0; i<4; i++) {
+    tone (audioPin, 2500, 1000);
+    delay(300);
+  }
+}
 void setupBluetooth() {
   Serial.print("Initializing Bluetooth at "); Serial.print(BLUETOOTH_SPEED); Serial.println(" BAUD...");
   btSerial.begin(BLUETOOTH_SPEED);
@@ -102,6 +132,45 @@ void setupGPS() {
   Serial.println("GPS setup done.");
 }
 
+
+void setupGateSwitch() {
+  pinMode(starPin, INPUT);
+  pinMode(portPin, INPUT);
+  digitalWrite(starPin, LOW);
+  digitalWrite(portPin, LOW);
+}
+
+void setupRelay()
+{
+  pinMode(relayPin1, OUTPUT);      // sets the digital pin as output
+  pinMode(relayPin2, OUTPUT);      // sets the digital pin as output
+  pinMode(relayPin3, OUTPUT);      // sets the digital pin as output
+  pinMode(relayPin4, OUTPUT);      // sets the digital pin as output
+  digitalWrite(relayPin1, HIGH);        // Prevents relays from starting up engaged
+  digitalWrite(relayPin2, HIGH);        // Prevents relays from starting up engaged
+  digitalWrite(relayPin3, HIGH);        // Prevents relays from starting up engaged
+  digitalWrite(relayPin4, HIGH);        // Prevents relays from starting up engaged
+}
+
+void testRelay()
+{
+  digitalWrite(relayPin1, LOW);   // energizes the relay and lights the LED
+  delay(500);
+  digitalWrite(relayPin2, LOW);   // energizes the relay and lights the LED
+  delay(500);
+  digitalWrite(relayPin3, LOW);   // energizes the relay and lights the LED
+  delay(500);
+  digitalWrite(relayPin4, LOW);   // energizes the relay and lights the LED
+  delay(2000);
+  digitalWrite(relayPin1, HIGH);    // de-energizes the relay and LED is off
+  delay(500);
+  digitalWrite(relayPin2, HIGH);    // de-energizes the relay and LED is off
+  delay(500);
+  digitalWrite(relayPin3, HIGH);    // de-energizes the relay and LED is off
+  delay(500);
+  digitalWrite(relayPin4, HIGH);    // de-energizes the relay and LED is off
+}
+
 void parseBluetoothSetupResponse() {
     delay(1000);    
     while (btSerial.available()) {
@@ -133,6 +202,22 @@ int freeRam ()
   return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
 }
 
+
+void engagePortGate() {
+  digitalWrite(relayPin1, LOW); 
+  delay(1000);
+  digitalWrite(relayPin1, HIGH); 
+}
+void engageStarGate() {
+  digitalWrite(relayPin3, LOW); 
+  delay(1000);
+  digitalWrite(relayPin3, HIGH);  
+}
+void retractGates() {
+  //digitalWrite(relayPin2, LOW); 
+  //digitalWrite(relayPin4, LOW);
+  //delay(1000);
+}
 
 uint32_t timer = millis();
 void loop()
@@ -177,6 +262,10 @@ void loop()
       Serial.println();
     }
 
+    if (GPS.speed < 1) {
+      GPS.speed = 0;
+    }
+
     // format: fix, satellies, knots, direction, in_motion, percent_deployed
     btSerial.print((int)GPS.fix);
     btSerial.print(",");
@@ -190,6 +279,25 @@ void loop()
     btSerial.print(",");
     btSerial.print("80");   
     btSerial.println();
+
+  
+    int portEnabled = digitalRead(portPin);
+    int starEnabled = digitalRead(starPin);
+  
+    Serial.print("Port enabled: "); Serial.println(portEnabled);
+    Serial.print("Starboard enabled: "); Serial.println(starEnabled);
+  
+    if (digitalRead(portPin)) {
+      //engagePortGate();
+    }
+    else if (digitalRead(starPin)) {
+      //engageStarGate();
+    }
+    else {
+      //retractGates();
+    }
+  
     
   }
+
 }
