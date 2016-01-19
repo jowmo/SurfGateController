@@ -7,82 +7,6 @@
 #include <SoftwareSerial.h>
 
 
-
-class GateController
-{
-  int relayOpenPin;
-  int relayClosePin;
-  unsigned long closeDuration = 5000;
-  unsigned long previousMillis;
-  unsigned long actualMillis;
-  unsigned long targetOpenMillis;
-  unsigned long targetCloseMillis;
-
-  public:
-  GateController(int openPin, int closePin) {
-    relayOpenPin = openPin;
-    relayClosePin = closePin;
-    targetOpenMillis = 0;
-    targetCloseMillis = 0;
-    previousMillis = 0;
-    actualMillis = 0;
-  }
-
-  void Update(int on, long openDuration) {
-    unsigned long currentMillis = millis();
-
-    if (on) {
-      // reset target close millis account for rapid changes and half open gates here...
-      targetCloseMillis = 0;
-
-      // if we haven't started opening yet, start, else, stop when we reach the desired tick count
-      if (targetOpenMillis == 0) {
-        previousMillis = currentMillis;
-        targetOpenMillis = currentMillis + openDuration;
-        Open();
-      }
-      else if (currentMillis >= targetOpenMillis) {
-        actualMillis = currentMillis - previousMillis;
-        Stop();
-      }
-      
-    }
-
-    // Gate not on...
-    else {
-      // reset target open millis account for rapid changes and half open gates here...
-      targetOpenMillis = 0;
-      
-      if (targetCloseMillis == 0) {
-        targetCloseMillis = currentMillis + closeDuration;
-        Close();
-      }
-      else if (currentMillis >= targetCloseMillis) {
-        actualMillis = currentMillis - previousMillis;
-        Stop();
-      }
-        
-    }
-
-  }
-
-  void Open() {
-    digitalWrite(relayOpenPin, LOW);
-    digitalWrite(relayClosePin, HIGH);   
-  }
-
-  void Stop() {
-    digitalWrite(relayOpenPin, HIGH);
-    digitalWrite(relayClosePin, HIGH);
-  }
-
-  void Close() {
-    digitalWrite(relayOpenPin, HIGH);  
-    digitalWrite(relayClosePin, LOW);   
-  }
-
-};
-
 class GateController2
 {
   int relayOpenPin;
@@ -117,7 +41,7 @@ class GateController2
 
     // delta for de-bouncing
     long delta = abs(actualMillis - openDuration);
-    if (delta < 100) {Serial.print(" - DELTA : " ); Serial.print(delta); Serial.print(" target: "); Serial.println(openDuration);}
+    //if (delta < 100) {Serial.print(" - DELTA : " ); Serial.print(delta); Serial.print(" target: "); Serial.println(openDuration);}
 
     if (on) {
       if ((actualMillis < openDuration) && (delta > 50)) {
@@ -197,6 +121,9 @@ int potPin = 2;                    // The Potentiometer for Gate Adjustment
  int starDurationTarget = 0;
  int portExtending = 0;
  int starExtending = 0;
+
+ float gatePotOldValue = 0;
+ 
  float maxExtenstiopenDurationMS = 10000;
 
 // define reset function for software-enable Arduino resets
@@ -233,6 +160,9 @@ void setup()
   OCR0A = 0xAF;
   TIMSK0 |= _BV(OCIE0A);
 
+  // analogRead(potPin);
+  gatePotOldValue = analogRead(potPin);
+
   // Signal ready status
   playReady();
   Serial.println("All Systems Ready.");
@@ -257,8 +187,23 @@ void playReady() {
   }
 }
 
-int getGateExtensiopenDuration() {
-  float value = analogRead(potPin);  
+int getGateExtensionOpenDuration() {
+  float value = analogRead(potPin);
+  int delta = abs(value - gatePotOldValue);
+  if (delta < 50) {
+    value = gatePotOldValue;
+  }
+  else {
+    Serial.print("Gate Pot Value Changed from "); Serial.print(gatePotOldValue); Serial.print(" to "); Serial.println(value);
+    gatePotOldValue = value;    
+  }
+
+/*
+  if (delta > 0) {
+    Serial.print("DELTA - Gate Pot Value Changed from "); Serial.print(gatePotOldValue); Serial.print(" to "); Serial.print(value); Serial.print(" delta "); Serial.println(delta);
+  }
+*/
+  
   float adjust = value / 1024;
   int duration = int(maxExtenstiopenDurationMS * adjust);
   duration = ((int)duration/100 + ((int)duration%100>2)) * 100;
@@ -402,7 +347,7 @@ void loop()
   /*
    * Read Sensors
    */
-  int gateDuration = getGateExtensiopenDuration();  
+  int gateDuration = getGateExtensionOpenDuration();  
   int portEnabled = digitalRead(portPin);
   int starEnabled = digitalRead(starPin);
 
@@ -474,7 +419,7 @@ void loop()
 
     Serial.print("Port enabled: "); Serial.print(portEnabled); Serial.print(" position: "); Serial.println(portPosition);
     Serial.print("Starboard enabled: "); Serial.print(starEnabled); Serial.print(" position: "); Serial.println(starPosition);
-    Serial.print("Current Gate Extension Duration Setting (ms): "); Serial.println(getGateExtensiopenDuration());
+    Serial.print("Current Gate Extension Duration Setting (ms): "); Serial.println(getGateExtensionOpenDuration());
           
   }
 
