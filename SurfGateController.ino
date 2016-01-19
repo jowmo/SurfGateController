@@ -7,6 +7,160 @@
 #include <SoftwareSerial.h>
 
 
+
+class GateController
+{
+  int relayOpenPin;
+  int relayClosePin;
+  unsigned long closeDuration = 5000;
+  unsigned long previousMillis;
+  unsigned long actualMillis;
+  unsigned long targetOpenMillis;
+  unsigned long targetCloseMillis;
+
+  public:
+  GateController(int openPin, int closePin) {
+    relayOpenPin = openPin;
+    relayClosePin = closePin;
+    targetOpenMillis = 0;
+    targetCloseMillis = 0;
+    previousMillis = 0;
+    actualMillis = 0;
+  }
+
+  void Update(int on, long openDuration) {
+    unsigned long currentMillis = millis();
+
+    if (on) {
+      // reset target close millis account for rapid changes and half open gates here...
+      targetCloseMillis = 0;
+
+      // if we haven't started opening yet, start, else, stop when we reach the desired tick count
+      if (targetOpenMillis == 0) {
+        previousMillis = currentMillis;
+        targetOpenMillis = currentMillis + openDuration;
+        Open();
+      }
+      else if (currentMillis >= targetOpenMillis) {
+        actualMillis = currentMillis - previousMillis;
+        Stop();
+      }
+      
+    }
+
+    // Gate not on...
+    else {
+      // reset target open millis account for rapid changes and half open gates here...
+      targetOpenMillis = 0;
+      
+      if (targetCloseMillis == 0) {
+        targetCloseMillis = currentMillis + closeDuration;
+        Close();
+      }
+      else if (currentMillis >= targetCloseMillis) {
+        actualMillis = currentMillis - previousMillis;
+        Stop();
+      }
+        
+    }
+
+  }
+
+  void Open() {
+    digitalWrite(relayOpenPin, LOW);
+    digitalWrite(relayClosePin, HIGH);   
+  }
+
+  void Stop() {
+    digitalWrite(relayOpenPin, HIGH);
+    digitalWrite(relayClosePin, HIGH);
+  }
+
+  void Close() {
+    digitalWrite(relayOpenPin, HIGH);  
+    digitalWrite(relayClosePin, LOW);   
+  }
+
+};
+
+class GateController2
+{
+  int relayOpenPin;
+  int relayClosePin;
+  int opening;
+  int closing;
+  unsigned long closeDuration = 5000;
+  unsigned long previousMillis;
+  unsigned long actualMillis;
+  unsigned long targetOpenMillis;
+  unsigned long targetCloseMillis;
+
+  public:
+  GateController2(int openPin, int closePin) {
+    relayOpenPin = openPin;
+    relayClosePin = closePin;
+    targetOpenMillis = 0;
+    targetCloseMillis = 0;
+    previousMillis = 0;
+    actualMillis = 0;
+    opening = 0;
+    closing = 0;
+  }
+
+  long Update(int on, long openDuration) {
+    unsigned long currentMillis = millis();
+
+    if (!on) {
+      on = 1;
+      openDuration = 0;
+    }
+
+    // delta for de-bouncing
+    long delta = abs(actualMillis - openDuration);
+    if (delta < 100) {Serial.print(" - DELTA : " ); Serial.print(delta); Serial.print(" target: "); Serial.println(openDuration);}
+
+    if (on) {
+      if ((actualMillis < openDuration) && (delta > 50)) {
+        opening = 1;
+        closing = 0;
+        actualMillis = actualMillis + (currentMillis - previousMillis);
+        Open();
+      }
+      else if ((actualMillis > openDuration) && (delta > 50)) {       
+        opening = 0;
+        closing = 1;
+        actualMillis = actualMillis - (currentMillis - previousMillis);
+        if (actualMillis < 0) actualMillis = 0;
+        Close();
+      }
+      else {       
+        opening = 0;
+        closing = 0;
+        Stop();
+      }     
+    }
+    previousMillis = currentMillis;
+    return actualMillis;
+  }
+
+  void Open() {
+    digitalWrite(relayOpenPin, LOW);
+    digitalWrite(relayClosePin, HIGH);   
+  }
+
+  void Stop() {
+    digitalWrite(relayOpenPin, HIGH);
+    digitalWrite(relayClosePin, HIGH);
+  }
+
+  void Close() {
+    digitalWrite(relayOpenPin, HIGH);  
+    digitalWrite(relayClosePin, LOW);   
+  }
+
+};
+
+
 /*
  * Note that Arduino Uno only allows one tx and one rx.  
  * We'll initiate the Bluetooth first using both RX and TX, 
@@ -32,6 +186,19 @@ int starPin = 13;                  // The starboard gate switch
 
 int audioPin = 4;                  // The piezo device
 
+int potPin = 2;                    // The Potentiometer for Gate Adjustment
+
+/*
+ * Gate state variables
+ */
+ int portExtendedDuration = 0;
+ int starExtendedDuration = 0;
+ int portDurationTarget = 0;
+ int starDurationTarget = 0;
+ int portExtending = 0;
+ int starExtending = 0;
+ float maxExtenstiopenDurationMS = 10000;
+
 // define reset function for software-enable Arduino resets
 void(* resetFunc) (void) = 0;
 
@@ -42,6 +209,7 @@ void setup()
   
   // Serial Setup
   Serial.begin(115200);
+  delay(1000);
   Serial.println("SurfGateController Booting...");
 
   // Play startup tone
@@ -51,22 +219,23 @@ void setup()
   setupRelay();
 
   // BT Setup
-  setupBluetooth();
+  //setupBluetooth();
 
   // GPS Setup
-  setupGPS();
-
-  // Signal ready status
-  playReady();
-  Serial.println("All Systems Ready.");
+  //setupGPS();
 
   //
   // Setup the Interrupt used for GPS reading
   //
   // Timer0 is already used for millis() - we'll just interrupt somewhere
   // in the middle and call the "Compare A" function above
+  Serial.println("Setting GPS Interrupt.");
   OCR0A = 0xAF;
   TIMSK0 |= _BV(OCIE0A);
+
+  // Signal ready status
+  playReady();
+  Serial.println("All Systems Ready.");
 }
 
 void playStartup() {
@@ -78,7 +247,6 @@ void playStartup() {
   }
 }
 
-
 void playReady() {
   tone (audioPin, 2000, 1000);
   return; 
@@ -88,6 +256,15 @@ void playReady() {
     delay(300);
   }
 }
+
+int getGateExtensiopenDuration() {
+  float value = analogRead(potPin);  
+  float adjust = value / 1024;
+  int duration = int(maxExtenstiopenDurationMS * adjust);
+  duration = ((int)duration/100 + ((int)duration%100>2)) * 100;
+  return duration;
+}
+
 void setupBluetooth() {
   Serial.print("Initializing Bluetooth at "); Serial.print(BLUETOOTH_SPEED); Serial.println(" BAUD...");
   btSerial.begin(BLUETOOTH_SPEED);
@@ -202,27 +379,16 @@ int freeRam ()
   return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
 }
 
-
-void engagePortGate() {
-  digitalWrite(relayPin1, LOW); 
-  delay(1000);
-  digitalWrite(relayPin1, HIGH); 
-}
-void engageStarGate() {
-  digitalWrite(relayPin3, LOW); 
-  delay(1000);
-  digitalWrite(relayPin3, HIGH);  
-}
-void retractGates() {
-  //digitalWrite(relayPin2, LOW); 
-  //digitalWrite(relayPin4, LOW);
-  //delay(1000);
-}
-
 uint32_t timer = millis();
+
+GateController2 portGateController(relayPin1,relayPin2);
+GateController2 starGateController(relayPin3,relayPin4);
+
 void loop()
 {
-  // if a sentence is received, we can check the checksum, parse it...
+  /*
+   * GPS and Communication Engine
+   */
   if (GPS.newNMEAreceived()) {
     // a tricky thing here is if we print the NMEA sentence, or data
     // we end up not listening and catching other sentences! 
@@ -232,9 +398,35 @@ void loop()
     if (!GPS.parse(GPS.lastNMEA()))   // this also sets the newNMEAreceived() flag to false
       return;  // we can fail to parse a sentence in which case we should just wait for another
   }
+  
+  /*
+   * Read Sensors
+   */
+  int gateDuration = getGateExtensiopenDuration();  
+  int portEnabled = digitalRead(portPin);
+  int starEnabled = digitalRead(starPin);
+
+  // override the enabled bit if we have GPS and we're outside of acceptable speed limits
+  if (GPS.fix) {
+    if (GPS.speed < 7 || GPS.speed > 14) {
+      Serial.println("Speed out-of-bounds. Disabling gates.");
+      portEnabled = 0;
+      starEnabled = 0;
+    }
+  }
+
+  /*
+   * Gate Engine
+   */
+  gateDuration = 6000;
+  long portPosition = portGateController.Update(portEnabled, gateDuration);
+  long starPosition = starGateController.Update(starEnabled, gateDuration);
+
 
   // if millis() or timer wraps around, we'll just reset it
-  if (timer > millis())  timer = millis();
+  if (timer > millis())  {
+    timer = millis();
+  }
 
   // approximately every 2 seconds or so, print out the current stats
   if (millis() - timer > 2000) { 
@@ -280,24 +472,11 @@ void loop()
     btSerial.print("80");   
     btSerial.println();
 
-  
-    int portEnabled = digitalRead(portPin);
-    int starEnabled = digitalRead(starPin);
-  
-    Serial.print("Port enabled: "); Serial.println(portEnabled);
-    Serial.print("Starboard enabled: "); Serial.println(starEnabled);
-  
-    if (digitalRead(portPin)) {
-      //engagePortGate();
-    }
-    else if (digitalRead(starPin)) {
-      //engageStarGate();
-    }
-    else {
-      //retractGates();
-    }
-  
-    
+    Serial.print("Port enabled: "); Serial.print(portEnabled); Serial.print(" position: "); Serial.println(portPosition);
+    Serial.print("Starboard enabled: "); Serial.print(starEnabled); Serial.print(" position: "); Serial.println(starPosition);
+    Serial.print("Current Gate Extension Duration Setting (ms): "); Serial.println(getGateExtensiopenDuration());
+          
   }
 
 }
+
