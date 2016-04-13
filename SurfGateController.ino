@@ -1,10 +1,10 @@
 #define BLUETOOTH_NAME "SurfGate"
 #define BLUETOOTH_SPEED 9600
+#define BLUETOOTH_ENABLED true
 #define GATE_MINIMUM_KNOTS 6
 #define GATE_MAXIMUM_KNOTS 12
 #define GPS_VERBOSE false
 #define GPS_REQUIRED false
-//#define BLUETOOTH_ENABLED
 
 #include <Adafruit_GPS.h>
 #include <SoftwareSerial.h>
@@ -17,10 +17,10 @@ class GateController
   int relayClosePin;
   int opening;
   int closing;
-  unsigned long previousMillis;
-  unsigned long actualMillis;
-  unsigned long targetOpenMillis;
-  unsigned long targetCloseMillis;
+  long previousMillis;
+  long actualMillis;
+  long targetOpenMillis;
+  long targetCloseMillis;
 
   public:
   GateController(int openPin, int closePin) {
@@ -34,8 +34,8 @@ class GateController
     closing = 0;
   }
 
-  long Update(int on, long openDuration) {
-    unsigned long currentMillis = millis();
+  long Update(int on, unsigned long openDuration) {
+    long currentMillis = millis();
     if (firstUpdate) {
       previousMillis = currentMillis;
       firstUpdate = false;
@@ -70,7 +70,9 @@ class GateController
         closing = 1;
         //Serial.println("CLOSING! actualMillis:" + (String)actualMillis + " currentMillis:" + (String)currentMillis + " previousMillis:" + (String)previousMillis + " open duration:" + (String)openDuration);
         actualMillis = actualMillis - (currentMillis - previousMillis);
-        if (actualMillis < 0) actualMillis = 0;
+        if (actualMillis < 0) {
+          actualMillis = 0;
+        }
         //Serial.println("CLOSING! actualMillis:" + (String)actualMillis + " currentMillis:" + (String)currentMillis + " previousMillis:" + (String)previousMillis + " open duration:" + (String)openDuration);
         //Serial.println("---------------");
         Close();
@@ -84,6 +86,7 @@ class GateController
       }     
     }
     previousMillis = currentMillis;
+    if (actualMillis < 0) actualMillis = 0;
     return actualMillis;
   }
 
@@ -144,7 +147,7 @@ int portExtending = 0;
 int starExtending = 0;
 float gatePotOldValue = 0;
 
-float maxExtenstiopenDurationMS = 5000;
+int maxExtenstiopenDurationMS = 5000;
 
 GateController portGateController(relayPin1,relayPin2);
 GateController starGateController(relayPin3,relayPin4);
@@ -294,10 +297,15 @@ void parseBluetoothSetupResponse() {
     Serial.write("\n");
 }
 
+int freeRam() {
+  extern int __heap_start, *__brkval; 
+  int v; 
+  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval); 
+}
 
 // Interrupt is called once a millisecond, looks for any new GPS data, and stores it
 SIGNAL(TIMER0_COMPA_vect) {
-  char c = GPS.read();
+  GPS.read();
   if (btSerial.available()) {
       char t = (char)btSerial.read();
       Serial.write(t);
@@ -406,7 +414,8 @@ void loop()
     stats += "direction:" + dir + ",";
     stats += "port_position_percent:" + (String)portPositionPercentage + ",";
     stats += "starboard_position_percent:" + (String)starPositionPercentage + ",";
-    stats += "gate_duration:" + (String)gateDuration;
+    stats += "gate_duration:" + (String)gateDuration + ",";
+    stats += "free_ram:" + (String)freeRam();
     Serial.println(stats);
 
     btSerial.println(stats);
