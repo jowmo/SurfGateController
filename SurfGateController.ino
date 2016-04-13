@@ -3,26 +3,27 @@
 #define GATE_MINIMUM_KNOTS 6
 #define GATE_MAXIMUM_KNOTS 12
 #define GPS_VERBOSE false
+#define GPS_REQUIRED false
 //#define BLUETOOTH_ENABLED
 
 #include <Adafruit_GPS.h>
 #include <SoftwareSerial.h>
 
 
-class GateController2
+class GateController
 {
+  bool firstUpdate = true;
   int relayOpenPin;
   int relayClosePin;
   int opening;
   int closing;
-  unsigned long closeDuration = 5000;
   unsigned long previousMillis;
   unsigned long actualMillis;
   unsigned long targetOpenMillis;
   unsigned long targetCloseMillis;
 
   public:
-  GateController2(int openPin, int closePin) {
+  GateController(int openPin, int closePin) {
     relayOpenPin = openPin;
     relayClosePin = closePin;
     targetOpenMillis = 0;
@@ -35,6 +36,10 @@ class GateController2
 
   long Update(int on, long openDuration) {
     unsigned long currentMillis = millis();
+    if (firstUpdate) {
+      previousMillis = currentMillis;
+      firstUpdate = false;
+    }
 
     if (!on) {
       //Serial.println("NOT ON");
@@ -63,9 +68,11 @@ class GateController2
       else if ((actualMillis > openDuration) && (delta > 50)) {       
         opening = 0;
         closing = 1;
+        //Serial.println("CLOSING! actualMillis:" + (String)actualMillis + " currentMillis:" + (String)currentMillis + " previousMillis:" + (String)previousMillis + " open duration:" + (String)openDuration);
         actualMillis = actualMillis - (currentMillis - previousMillis);
         if (actualMillis < 0) actualMillis = 0;
-        //Serial.println("CLOSING!");
+        //Serial.println("CLOSING! actualMillis:" + (String)actualMillis + " currentMillis:" + (String)currentMillis + " previousMillis:" + (String)previousMillis + " open duration:" + (String)openDuration);
+        //Serial.println("---------------");
         Close();
       }
       else {       
@@ -110,7 +117,6 @@ SoftwareSerial gpsSerial(3,2);   // GPS TX, GPS RX
 
 
 Adafruit_GPS GPS(&gpsSerial);
-#define GPSECHO  true
 uint32_t timer = millis();
 
 /*
@@ -124,24 +130,24 @@ int relayPin4 = 7;                 // IN4 connected to digital pin 9
 int portPin = 12;                  // The port gate switch
 int starPin = 13;                  // The starboard gate switch
 
-int potPin = 2;                    // The Potentiometer for Gate Adjustment // analog 2
+int potPin = 2;                    // The Potentiometer for Gate Adjustment (Analog)
 
 /*
  * Gate state variables
  */
+int enabled = 0;
 int portExtendedDuration = 0;
 int starExtendedDuration = 0;
 int portDurationTarget = 0;
 int starDurationTarget = 0;
 int portExtending = 0;
 int starExtending = 0;
-bool requireGPS = false;
 float gatePotOldValue = 0;
 
 float maxExtenstiopenDurationMS = 5000;
 
-GateController2 portGateController(relayPin1,relayPin2);
-GateController2 starGateController(relayPin3,relayPin4);
+GateController portGateController(relayPin1,relayPin2);
+GateController starGateController(relayPin3,relayPin4);
 
 
 // define reset function for software-enable Arduino resets
@@ -158,7 +164,7 @@ void setup()
   setupRelay();
 
   // BT Setup
-  //setupBluetooth();
+  setupBluetooth();
 
   // GPS Setup
   setupGPS();
@@ -186,16 +192,9 @@ int getGateExtensionOpenDuration() {
     value = gatePotOldValue;
   }
   else {
-    Serial.print("Gate Pot Value Changed from "); Serial.print(gatePotOldValue); Serial.print(" to "); Serial.println(value);
     gatePotOldValue = value;    
   }
 
-/*
-  if (delta > 0) {
-    Serial.print("DELTA - Gate Pot Value Changed from "); Serial.print(gatePotOldValue); Serial.print(" to "); Serial.print(value); Serial.print(" delta "); Serial.println(delta);
-  }
-*/
-  
   float adjust = value / 1024;
   int duration = int(maxExtenstiopenDurationMS * adjust);
   duration = ((int)duration/100 + ((int)duration%100>2)) * 100;
@@ -203,7 +202,6 @@ int getGateExtensionOpenDuration() {
 }
 
 void setupBluetooth() {
-  #if defined btSerial
   Serial.print("Initializing Bluetooth at "); Serial.print(BLUETOOTH_SPEED); Serial.println(" BAUD...");
   btSerial.begin(BLUETOOTH_SPEED);
   delay(1000);
@@ -231,7 +229,6 @@ void setupBluetooth() {
   parseBluetoothSetupResponse();
 
   Serial.println("Bluetooth setup done.");   
-  #endif
 }
 
 
@@ -291,31 +288,25 @@ void testRelay()
 
 void parseBluetoothSetupResponse() {
     delay(1000);    
-#if defined btSerial
     while (btSerial.available()) {
       Serial.write(btSerial.read());
     }
     Serial.write("\n");
-#endif
 }
 
 
 // Interrupt is called once a millisecond, looks for any new GPS data, and stores it
 SIGNAL(TIMER0_COMPA_vect) {
   char c = GPS.read();
-#if defined btSerial
   if (btSerial.available()) {
       char t = (char)btSerial.read();
       Serial.write(t);
   }
-#endif
 }
 
 
 void loop()
 { 
-  int enabled = 1;
-  
   /*
    * GPS and Communication Engine
    */
@@ -335,21 +326,36 @@ void loop()
   int gateDuration = getGateExtensionOpenDuration();  
   int portEnabled = digitalRead(portPin);
   int starEnabled = digitalRead(starPin);
+  
+  String dir = String();
+  if(portEnabled) dir = "STARBOARD";
+  else if (starEnabled) dir = "PORT";
+  else dir = "CENTER";
 
   // override the enabled bit if we have GPS and we're outside of acceptable speed limits
-  if (GPS.fix && requireGPS) {
-    if (GPS.speed < 7 || GPS.speed > 14) {
-      //Serial.println("Speed out-of-bounds. Disabling gates.");
-      enabled = 0;
-      portEnabled = 0;
-      starEnabled = 0;
-    }
+  if (GPS_REQUIRED) {
+    if (GPS.fix) {
+      if (GPS.speed < 7 || GPS.speed > 14) {
+        //Serial.println("Speed out-of-bounds. Disabling gates.");
+        enabled = 0;
+      }
+      else {
+        enabled = 1;
+      }
+    } 
+  }
+  else {
+    enabled = 1;
+  }
+
+  if (!enabled) {
+    portEnabled = 0;
+    starEnabled = 0;    
   }
 
   /*
    * Gate Engine
    */
-  //gateDuration = 6000;
   long portPosition = portGateController.Update(portEnabled, gateDuration);
   long starPosition = starGateController.Update(starEnabled, gateDuration);
 
@@ -360,7 +366,7 @@ void loop()
   }
 
   // approximately every 2 seconds or so, print out the current stats
-  if (millis() - timer > 2000) { 
+  if (millis() - timer > 500) { 
     timer = millis(); // reset the timer
     
     if (GPS.fix && GPS_VERBOSE) {
@@ -384,11 +390,6 @@ void loop()
       GPS.speed = 0;
     }
 
-    String dir = String();
-    if(portEnabled) dir = "STARBOARD";
-    else if (starEnabled) dir = "PORT";
-    else dir = "CENTER";
-
     // output statistics...
     // format: name:value,name1:value1,name2:value2,...
     String fix = GPS.fix ? "1" : "0";
@@ -408,9 +409,7 @@ void loop()
     stats += "gate_duration:" + (String)gateDuration;
     Serial.println(stats);
 
-#if defined(BLUETOOTH_ENABLED)    
     btSerial.println(stats);
-#endif   
   }
 
 }
